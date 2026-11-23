@@ -7,6 +7,8 @@
 
 🧪 **[Phase 1 安装与测试说明](docs/phase1.md)**：包含专用用户、最小 sudoers、TOTP 配置、systemd 服务与测试步骤。请先在测试环境验证。
 
+🛠️ **[部署风格与安装/卸载说明](docs/deployment-conventions.md)**：参照 `tdl-bot`、`tg-auto`，提供 `scripts/install.sh`、`scripts/uninstall.sh`，默认保留配置，不自动启动或重启。
+
 📐 **[架构与安全设计（Phase 0）](docs/architecture.md)**：说明账号隔离、L1/L2 认证、单次提权请求协议、风险边界及 MVP 验收测试。
 
 ## 1. 项目简介
@@ -176,7 +178,7 @@
 
 ### Phase 5 — 工程化与发布
 
-- [ ] 编写安装、更新、卸载脚本。
+- [x] 编写安装、卸载脚本（待 Debian 13 实机验证）；更新复用安装脚本，尚无独立更新脚本。
 - [ ] 提供 systemd unit、环境配置示例和最小权限安装指导。
 - [ ] 补充单元/集成测试、日志轮转与错误恢复。
 - [ ] 检查公开仓库无 Bot Token、TOTP 密钥、个人账户或服务器隐私信息。
@@ -207,7 +209,7 @@ tg-admin/
 │       ├── executor/            # 普通命令与特权执行接口
 │       ├── docker/              # Docker 管理能力
 │       └── monitoring/          # 系统与服务查询
-├── scripts/                     # 安装、更新、卸载
+├── scripts/                     # 一键安装、卸载（已添加）
 ├── deploy/                      # systemd 服务和示例配置
 ├── tests/
 └── docs/                        # 设计、安全模型及使用文档
@@ -217,7 +219,7 @@ tg-admin/
 
 ## 9. 开发与使用提示
 
-目前仓库有 **Phase 1 可试运行的原型代码**，尚未完成自动化测试和 Debian 13 实机验收，不属于稳定版本。配置模板及手动安装指南请见 [docs/phase1.md](docs/phase1.md)；一键安装/卸载脚本将在后续提供。
+目前仓库有 **Phase 1 可试运行的原型代码**，尚未完成自动化测试和 Debian 13 实机验收，不属于稳定版本。配置模板及手动安装指南请见 [docs/phase1.md](docs/phase1.md)；安装/卸载脚本已添加，**尚未完成 Debian 13 实机验证**。
 
 由于项目涉及高权限远程命令执行，部署前应审查执行器、保护凭据、测试认证失败路径，并保留可以独立工作的 SSH 管理通道。
 
