@@ -60,6 +60,14 @@ fi
 "$repo/.venv/bin/python" -m compileall -q "$repo/src" "$repo/runner.py"
 python3 -m compileall -q "$repo/runner.py"
 
+# umask 077 protects newly created files but also makes the venv invisible
+# to the non-root systemd User=tgbot. Allow read/traverse, NEVER write.
+chmod -R a+rX "$repo/.venv"
+if ! sudo -n -u tgbot -- "$repo/.venv/bin/python" -c "import tg_admin; print(tg_admin.__version__)"; then
+  echo "tgbot cannot execute the virtualenv Python; check path permissions." >&2
+  exit 1
+fi
+
 install -d -o root -g tgbot -m 0750 "$config"
 if [[ ! -e "$envfile" ]]; then
   install -m 0640 -o root -g tgbot /dev/null "$envfile"
