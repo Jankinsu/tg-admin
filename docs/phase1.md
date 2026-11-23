@@ -87,6 +87,26 @@ sudo systemctl status tg-admin.service --no-pager
 sudo journalctl -u tg-admin -n 100 --no-pager
 ```
 
+## 启动报错 203/EXEC：Python 权限不足
+
+如果 `systemctl status tg-admin` 显示 `Failed to execute /opt/tg-admin/.venv/bin/python: Permission denied`，通常是安装器的 `umask 077` 使虚拟环境目录只允许 root 访问。先通过 SSH 检查：
+
+```bash
+namei -l /opt/tg-admin/.venv/bin/python
+sudo -u tgbot /opt/tg-admin/.venv/bin/python -V
+```
+
+**立即修复已安装的实例**（不改变目录所有者、不授予写权限）：
+
+```bash
+sudo chmod -R a+rX /opt/tg-admin/.venv
+sudo -u tgbot /opt/tg-admin/.venv/bin/python -V
+sudo systemctl restart tg-admin.service
+sudo systemctl status tg-admin.service --no-pager -l
+```
+
+安装脚本现已在依赖安装后自动设置虚拟环境只读/可遍历权限，并在安装时验证 `tgbot` 可以启动解释器。修复后如果出现新的错误，再查看 `sudo journalctl -u tg-admin -n 80 --no-pager`；不要公开其中的任何凭据。
+
 ## 6. 常见故障
 
 | 症状 | 检查 |
