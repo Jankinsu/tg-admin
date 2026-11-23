@@ -22,7 +22,8 @@ repo=/opt/tg-admin
 config=/etc/tg-admin
 unit=/etc/systemd/system/tg-admin.service
 sudoers=/etc/sudoers.d/tg-admin
-for path in "$repo" "$config" "$unit" "$sudoers"; do
+l2sudoers=/etc/sudoers.d/tg-admin-l2
+for path in "$repo" "$config" "$unit" "$sudoers" "$l2sudoers" /var/lib/tg-admin; do
   [[ ! -L "$path" ]] || { echo "Refusing symlink: $path" >&2; exit 1; }
 done
 if [[ "$purge" -eq 1 && "$yes" -ne 1 ]]; then
@@ -33,12 +34,12 @@ if [[ "$purge" -eq 1 && "$yes" -ne 1 ]]; then
   [[ "$answer" == 'DELETE tg-admin' ]] || { echo 'Cancelled; nothing removed.'; exit 1; }
 fi
 systemctl disable --now tg-admin.service 2>/dev/null || true
-rm -f -- "$unit" "$sudoers"
+rm -f -- "$unit" "$sudoers" "$l2sudoers"
 systemctl daemon-reload
 systemctl reset-failed tg-admin.service 2>/dev/null || true
-echo 'Stopped tg-admin; removed its systemd service and sudoers.'
+echo 'Stopped tg-admin; removed its systemd service and BOTH sudoers rules.'
 if [[ "$purge" -eq 1 ]]; then
-  for path in "$repo" "$config"; do
+  for path in "$repo" "$config" /var/lib/tg-admin; do
     if [[ -d "$path" ]]; then
       [[ "$(stat -c %u "$path")" == 0 ]] || { echo "Refusing non-root-owned directory: $path" >&2; exit 1; }
       rm -rf -- "$path"
@@ -46,6 +47,6 @@ if [[ "$purge" -eq 1 ]]; then
   done
   echo 'Removed tg-admin code and credentials; preserve any backups separately.'
 else
-  echo 'Preserved code and credentials for reinstall.'
+  echo 'Preserved code, L1/L2 credentials and authorization state for reinstall.'
 fi
 echo 'Unchanged: tgbot/tgexec accounts, Docker containers/images/volumes, tdl-bot, tg-auto, Throne, QingLong, system packages.'
