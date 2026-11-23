@@ -9,22 +9,24 @@
 - 手机上的 TOTP 验证器，例如 Google Authenticator。
 - **不能**把 Bot Token、TOTP 密钥、个人 ID 提交到 Git 仓库。
 
-## 1. 通过 SSH 安装依赖与专用账户
+## 1. 通过 SSH 安装（与 tg-auto / tdl-bot 统一）
+
+`tg-admin` 因为需要接收远程命令，使用 root 拥有的 `/opt/tg-admin` 而不是用户可写的 `~/apps`。统一的安装和卸载脚本见 [部署约定](deployment-conventions.md)。
+
+**用户当前已创建 `tgbot`、`tgexec`，不用再创建。**
 
 ```bash
 sudo apt update
 sudo apt install -y git python3 python3-venv python3-pip sudo
-sudo useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin tgbot
-sudo useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin tgexec
 sudo git clone https://github.com/Jankinsu/tg-admin.git /opt/tg-admin
 sudo chown -R root:root /opt/tg-admin
 sudo chmod -R go-w /opt/tg-admin
 
-sudo python3 -m venv /opt/tg-admin/.venv
-sudo /opt/tg-admin/.venv/bin/pip install -e /opt/tg-admin
+cd /opt/tg-admin
+sudo bash scripts/install.sh
 ```
 
-如果账户已存在，跳过对应的 `useradd`；如果 `/opt/tg-admin` 已存在，先核对其内容，不要直接覆盖。部署过程切勿修改服务器现有 Docker 配置。
+安装会检测所需账户，创建保密配置模板、安装依赖和 systemd/sudoers 文件，**不会自动启动 Bot**。如果目录已存在，请先检查而不是重复 clone。
 
 ## 2. 创建第一组 TOTP 密钥
 
@@ -36,54 +38,30 @@ sudo /opt/tg-admin/.venv/bin/pip install -e /opt/tg-admin
 
 将生成的密钥加入手机身份验证器；可以使用身份验证器的**手动输入密钥**功能，类型选“基于时间”。
 
-Bot 配置写入 `/etc/tg-admin/bot.env`：
+Bot 配置已由安装脚本自动创建在 `/etc/tg-admin/bot.env`，使用 SSH 编辑：
 
 ```bash
-sudo install -d -m 0750 -o root -g tgbot /etc/tg-admin
-sudo install -m 0640 -o root -g tgbot /dev/null /etc/tg-admin/bot.env
 sudoedit /etc/tg-admin/bot.env
 ```
 
-内容格式（**替换所有示例值**）：
+将其中四个示例字段替换为真实 Bot Token、Telegram 数字 User ID、私聊 Chat ID、L1 TOTP 密钥。文件权限由安装脚本设为 `root:tgbot 0640`。
 
-```dotenv
-TG_ADMIN_BOT_TOKEN=YOUR_BOT_TOKEN
-TG_ADMIN_USER_ID=YOUR_NUMERIC_USER_ID
-TG_ADMIN_CHAT_ID=YOUR_PRIVATE_CHAT_ID
-TG_ADMIN_TOTP_SECRET=YOUR_BASE32_TOTP_SECRET
-```
+## 3. 验证并启动
 
-这些配置通过 systemd 的 EnvironmentFile 注入 Bot 进程。在第一版中它们只供 `tgbot` 读取，不提供给 `tgexec`。请勿通过聊天或截图公开。
-
-## 3. 安装最小 sudoers 规则
-
-```bash
-sudo install -m 0440 -o root -g root \
-  /opt/tg-admin/deploy/tg-admin.sudoers /etc/sudoers.d/tg-admin
-sudo visudo -cf /etc/sudoers.d/tg-admin
-```
-
-**务必确认该规则只允许以 `tgexec` 身份执行固定 runner，而不是以 root 身份执行任意 shell。**
-
-验证：
+安装脚本已经检查 sudoers 语法，且只开放 `tgbot -> tgexec` 的固定执行入口。建议额外核查：
 
 ```bash
 sudo -u tgbot sudo -n -l
-```
-
-应只出现对应 `(tgexec)` 固定 runner 授权。若该账户从其他规则继承了 root 权限，先修正再继续。
-
-## 4. 安装服务并启动
-
-```bash
-sudo install -m 0644 -o root -g root \
-  /opt/tg-admin/deploy/tg-admin.service /etc/systemd/system/tg-admin.service
-sudo systemctl daemon-reload
+sudo visudo -cf /etc/sudoers.d/tg-admin
 sudo systemctl enable --now tg-admin.service
 sudo systemctl status tg-admin.service --no-pager
 ```
 
-服务器不需要开放新的入站端口；Bot 使用 Telegram API 长轮询。Debian 必须能访问 Telegram API。
+如果账户继承了额外的 root 或 Docker 权限，不要继续启动，先修正权限。
+
+## 4. 后续更新与卸载
+
+与 `tg-auto`、`tdl-bot` 保持一致的行为：**安装默认不重启，卸载默认保留配置和代码，`--purge` 才清理**。具体命令与保护范围见 [deployment-conventions.md](deployment-conventions.md)。
 
 ## 5. 手机试用
 
@@ -131,15 +109,11 @@ python3 -m venv .venv
 
 测试覆盖 TOTP 使用与重放、会话空闲超时、命令检查、执行入口固定路径、非特权 runner 的输出截断。**CI 和真实 Debian 集成测试仍待执行**。
 
-## 8. 停用与卸载（手动）
+## 8. 停用与卸载
 
 ```bash
-sudo systemctl disable --now tg-admin.service
-sudo rm -f /etc/systemd/system/tg-admin.service
-sudo rm -f /etc/sudoers.d/tg-admin
-sudo systemctl daemon-reload
+sudo bash /opt/tg-admin/scripts/uninstall.sh
 ```
 
-确认不再需要该服务后，可进一步清理 `/etc/tg-admin`、`/opt/tg-admin` 及专用账户。**删除前自行备份需要保留的配置**。以上操作不会主动删除任何 Docker 容器、镜像、数据卷或 Docker Compose 项目。
+默认仅移除服务与 sudoers，保留凭据和程序目录。明确要求清除本项目数据时，使用 `--purge`（二次确认），**不会删除两个用户或任何 Docker 数据**。详见 [部署约定](deployment-conventions.md)。
 
-完整的一键安装与卸载脚本将在 Phase 5 提供。
