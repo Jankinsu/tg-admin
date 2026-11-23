@@ -106,6 +106,9 @@ async def main_bot() -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # HTTP client request URLs may contain the Bot Token: never log them.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("telegram").setLevel(logging.WARNING)
     try:
         asyncio.run(main_bot())
     except KeyboardInterrupt:
