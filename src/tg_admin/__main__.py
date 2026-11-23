@@ -5,12 +5,35 @@ import asyncio
 import logging
 import os
 
+from urllib.parse import urlsplit
+
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from .core import AuthState, execute, validate_command
 
 log = logging.getLogger(__name__)
+
+
+def read_proxy() -> str | None:
+    """Optional Telegram API proxy; never affects executed shell commands."""
+    value = os.environ.get("TG_ADMIN_PROXY", "").strip()
+    if not value:
+        return None
+    try:
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https", "socks5") or not parts.hostname or not parts.port:
+            raise ValueError
+    except ValueError as exc:
+        raise ValueError("Invalid TG_ADMIN_PROXY; use http://host:port or socks5://host:port") from exc
+    return value
+
+
+def build_application(token: str, proxy: str | None):
+    builder = ApplicationBuilder().token(token).concurrent_updates(False)
+    if proxy:
+        builder = builder.proxy(proxy).get_updates_proxy(proxy)
+    return builder.build()
 
 
 def load_config() -> tuple[str, int, int, str]:
@@ -86,7 +109,7 @@ async def main_bot() -> None:
         for index in range(0, len(out), 3500):
             await update.message.reply_text(out[index:index + 3500])
 
-    app = ApplicationBuilder().token(token).concurrent_updates(False).build()
+    app = build_application(token, read_proxy())
     for name, handler in [
         ("start", help_cmd), ("help", help_cmd), ("login", login),
         ("logout", logout), ("whoami", whoami), ("run", run_cmd),
