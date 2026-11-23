@@ -1,0 +1,23 @@
+[Unit]
+Description=tg-admin Telegram management bot (Phase 1 only)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=tgbot
+Group=tgbot
+WorkingDirectory=/opt/tg-admin
+EnvironmentFile=/etc/tg-admin/bot.env
+ExecStart=/opt/tg-admin/.venv/bin/python -m tg_admin
+Restart=on-failure
+RestartSec=5
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+# Do NOT set NoNewPrivileges=yes: Phase 1 uses sudo solely to change
+# identity to the less-privileged tgexec account.
+# Bot must NEVER be a member of docker or sudo groups.
+
+[Install]
+WantedBy=multi-user.target
