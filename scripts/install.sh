@@ -76,6 +76,8 @@ TG_ADMIN_BOT_TOKEN=replace_me
 TG_ADMIN_USER_ID=0
 TG_ADMIN_CHAT_ID=0
 TG_ADMIN_TOTP_SECRET=replace_me
+# Optional local Throne proxy; blank means direct Telegram access.
+TG_ADMIN_PROXY=socks5://127.0.0.1:2080
 ENV
   echo "Created $envfile. Set credentials before starting."
 else
