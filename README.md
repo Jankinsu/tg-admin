@@ -135,12 +135,12 @@
 
 ### Phase 1 — Telegram 通信与普通管理会话
 
-- [x] 建立 Python 项目、配置模板与基础测试用例（尚未运行测试）。
+- [x] 建立 Python 项目、配置模板与基础测试用例（GitHub Actions 单元测试通过）。
 - [x] 编写 Telegram User ID / Chat ID 白名单逻辑（待实机验证）。
 - [x] 编写 TOTP 登录、会话超时、登出及失败限制（待实机验证）。
 - [x] 编写普通用户权限命令执行和输出回传（待实机验证）。
 - [x] 编写命令超时、并发顺序和输出大小限制（待实机验证）。
-- [ ] 在 Debian 13 上执行测试并完成真实 Telegram 端到端验证。
+- [ ] 在 Debian 13 上执行真实 Telegram 端到端验证（GitHub Actions 单元测试已通过）。
 
 **验收标准**：手机可安全查询 Debian 系统状态，并收到正确的 stdout、stderr、退出码。
 
