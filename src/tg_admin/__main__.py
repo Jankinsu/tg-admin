@@ -7,12 +7,45 @@ import os
 
 from urllib.parse import urlsplit
 
-from telegram import Update
+from telegram import BotCommand, BotCommandScopeChat, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from .core import AuthState, execute, validate_command
 
 log = logging.getLogger(__name__)
+
+# Only implemented commands appear in the native Telegram menu.
+COMMAND_MENU = (
+    BotCommand("help", "查看可用命令与使用示例"),
+    BotCommand("login", "使用 TOTP 验证码登录"),
+    BotCommand("whoami", "查询管理会话状态"),
+    BotCommand("run", "执行普通 Linux 命令"),
+    BotCommand("logout", "结束管理会话"),
+)
+
+HELP_TEXT = """🛠 tg-admin · 当前可用命令（Phase 1）
+
+/help 或 /menu — 显示本帮助
+/login 123456 — 使用身份验证器的 6 位动态码登录
+/whoami — 检查会话是否仍有效
+/run <Linux 命令> — 以 tgexec 普通用户执行命令
+/logout — 主动结束管理会话
+
+📋 常用示例（先 /login）：
+/run whoami
+/run uptime
+/run free -h
+/run df -h
+/run systemctl status docker --no-pager
+
+🔐 说明：
+• 登录最长保持 15 分钟，空闲 5 分钟自动退出。
+• /run 是非交互式普通权限，不提供 sudo 或 Docker 管理权限。
+• 结果回传退出码、标准输出及错误输出。
+• /sudo、/docker 仍在后续阶段开发。
+• 登录验证码不要分享；Telegram Bot 私聊并非端到端加密。
+
+点输入框旁 Menu 可查看并选择命令；部分命令需要自行补上参数。"""
 
 
 def read_proxy() -> str | None:
@@ -62,7 +95,7 @@ async def main_bot() -> None:
     async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not allowed(update):
             return
-        await update.message.reply_text("/login <6位验证码>\n/logout\n/whoami\n/run <命令>\n目前仅支持普通权限，/sudo 尚未实现。")
+        await update.message.reply_text(HELP_TEXT)
 
     async def login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not allowed(update):
@@ -111,13 +144,19 @@ async def main_bot() -> None:
 
     app = build_application(token, read_proxy())
     for name, handler in [
-        ("start", help_cmd), ("help", help_cmd), ("login", login),
+        ("start", help_cmd), ("help", help_cmd), ("menu", help_cmd), ("login", login),
         ("logout", logout), ("whoami", whoami), ("run", run_cmd),
     ]:
         app.add_handler(CommandHandler(name, handler))
     log.info("tg-admin Phase 1 starting, no sudo/Docker access enabled")
     await app.initialize()
     await app.start()
+    # Register a native command menu for the authorized private chat only.
+    # Do not expose admin commands as a global bot menu.
+    try:
+        await app.bot.set_my_commands(COMMAND_MENU, scope=BotCommandScopeChat(chat_id=chat_id))
+    except Exception:
+        log.warning("Could not register Telegram command menu; /help still works.")
     await app.updater.start_polling(drop_pending_updates=True)
     try:
         await asyncio.Event().wait()
