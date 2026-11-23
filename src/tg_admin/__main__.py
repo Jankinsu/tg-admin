@@ -11,6 +11,7 @@ from telegram import BotCommand, BotCommandScopeChat, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from .core import AuthState, execute, validate_command
+from .privilege import AgentError, approve_request, cancel_request, create_request
 
 log = logging.getLogger(__name__)
 
@@ -20,16 +21,22 @@ COMMAND_MENU = (
     BotCommand("login", "使用 TOTP 验证码登录"),
     BotCommand("whoami", "查询管理会话状态"),
     BotCommand("run", "执行普通 Linux 命令"),
+    BotCommand("sudo", "高权限命令：发起单次授权"),
+    BotCommand("approve", "使用第二组 TOTP 授权执行"),
+    BotCommand("cancel", "取消待执行高权限命令"),
     BotCommand("logout", "结束管理会话"),
 )
 
-HELP_TEXT = """🛠 tg-admin · 当前可用命令（Phase 1）
+HELP_TEXT = """🛠 tg-admin · 当前可用命令（Phase 2）
 
 /help 或 /menu — 显示本帮助
 /login 123456 — 使用身份验证器的 6 位动态码登录
 /whoami — 检查会话是否仍有效
 /run <Linux 命令> — 以 tgexec 普通用户执行命令
 /logout — 主动结束管理会话
+/sudo <命令> — 提交高权限命令并预览
+/approve 123456 — 用第二组 TOTP 仅授权当前命令一次
+/cancel — 取消当前待授权命令
 
 📋 常用示例（先 /login）：
 /run whoami
@@ -42,7 +49,9 @@ HELP_TEXT = """🛠 tg-admin · 当前可用命令（Phase 1）
 • 登录最长保持 15 分钟，空闲 5 分钟自动退出。
 • /run 是非交互式普通权限，不提供 sudo 或 Docker 管理权限。
 • 结果回传退出码、标准输出及错误输出。
-• /sudo、/docker 仍在后续阶段开发。
+• /sudo 为第二组 TOTP 单次授权；命令提交 60 秒后失效。
+• 授权前请检查完整命令，高权限执行会修改真实系统。
+• /docker 便捷命令仍在后续阶段开发，可使用 /sudo docker ...。
 • 登录验证码不要分享；Telegram Bot 私聊并非端到端加密。
 
 点输入框旁 Menu 可查看并选择命令；部分命令需要自行补上参数。"""
@@ -82,6 +91,7 @@ def load_config() -> tuple[str, int, int, str]:
 async def main_bot() -> None:
     token, user_id, chat_id, secret = load_config()
     auth = AuthState(secret)
+    pending_request: str | None = None
 
     def allowed(update: Update) -> bool:
         return (
@@ -111,9 +121,16 @@ async def main_bot() -> None:
         await update.effective_chat.send_message(auth.login(code))
 
     async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        nonlocal pending_request
         if not allowed(update):
             return
         auth.logout()
+        if pending_request:
+            rid, pending_request = pending_request, None
+            try:
+                await asyncio.to_thread(cancel_request, rid, user_id, chat_id)
+            except AgentError:
+                log.warning("Could not cancel pending privilege request during logout.")
         await update.message.reply_text("管理会话已退出。")
 
     async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -142,13 +159,92 @@ async def main_bot() -> None:
         for index in range(0, len(out), 3500):
             await update.message.reply_text(out[index:index + 3500])
 
+
+    async def sudo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        nonlocal pending_request
+        if not allowed(update):
+            return
+        if not auth.authorized(touch=True):
+            await update.message.reply_text("请先完成 /login。")
+            return
+        raw = update.message.text or ""
+        try:
+            command = validate_command(raw.partition(" ")[2])
+            outcome = await asyncio.to_thread(create_request, command, user_id, chat_id)
+        except (ValueError, AgentError) as exc:
+            await update.message.reply_text(f"无法创建授权请求：{exc}")
+            return
+        if not outcome.get("ok"):
+            await update.message.reply_text("无法创建授权请求：" + outcome.get("error", "未知错误"))
+            return
+        pending_request = outcome["request_id"]
+        await update.message.reply_text(
+            "🔐 高权限请求（尚未执行）\n\n"
+            f"{outcome['command']}\n\n"
+            "请检查以上完整命令。60 秒内用第二组身份验证器发送 /approve <6位码>。"
+            "任何新 /sudo 命令将撤销前一个请求。\n使用 /cancel 放弃。"
+        )
+
+    async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        nonlocal pending_request
+        if not allowed(update):
+            return
+        if not pending_request:
+            await update.message.reply_text("当前没有待授权命令。")
+            return
+        rid, pending_request = pending_request, None
+        try:
+            await asyncio.to_thread(cancel_request, rid, user_id, chat_id)
+        except AgentError:
+            log.warning("Cancel request could not reach privileged agent.")
+        await update.message.reply_text("已取消当前待授权请求。")
+
+    async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        nonlocal pending_request
+        if not allowed(update):
+            return
+        raw_code = context.args[0] if len(context.args) == 1 else ""
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        if not auth.authorized(touch=True):
+            await update.effective_chat.send_message("管理会话已过期，请重新 /login。")
+            return
+        if not pending_request:
+            await update.effective_chat.send_message("当前没有待授权命令，请先 /sudo <命令>。")
+            return
+        if not (len(raw_code) == 6 and raw_code.isascii() and raw_code.isdigit()):
+            await update.effective_chat.send_message("请输入第二组身份验证器的 6 位数字码：/approve 123456")
+            return
+        rid, pending_request = pending_request, None
+        await update.effective_chat.send_message("⏳ 正在验证并执行本次高权限请求…")
+        try:
+            outcome = await asyncio.to_thread(approve_request, rid, raw_code, user_id, chat_id)
+        except AgentError as exc:
+            await update.effective_chat.send_message(f"授权执行失败：{exc}")
+            return
+        if not outcome.get("ok"):
+            await update.effective_chat.send_message("未执行：" + outcome.get("error", "认证失败"))
+            return
+        text = (
+            f"🔐 单次高权限操作完成\nexit={outcome['code']}\n"
+            f"STDOUT:\n{outcome['stdout'] or '(empty)'}\n"
+            f"STDERR:\n{outcome['stderr'] or '(empty)'}"
+        )
+        if outcome.get("truncated"):
+            text += "\n[输出超过上限，已终止执行进程]"
+        for index in range(0, len(text), 3500):
+            await update.effective_chat.send_message(text[index:index + 3500])
+
     app = build_application(token, read_proxy())
     for name, handler in [
         ("start", help_cmd), ("help", help_cmd), ("menu", help_cmd), ("login", login),
         ("logout", logout), ("whoami", whoami), ("run", run_cmd),
+        ("sudo", sudo_cmd), ("approve", approve_cmd), ("cancel", cancel_cmd),
     ]:
         app.add_handler(CommandHandler(name, handler))
-    log.info("tg-admin Phase 1 starting, no sudo/Docker access enabled")
+    log.info("tg-admin starting with optional L2 one-shot privileged agent")
     await app.initialize()
     await app.start()
     # Register a native command menu for the authorized private chat only.
