@@ -1,5 +1,5 @@
 [Unit]
-Description=tg-admin Telegram management bot (Phase 1 only)
+Description=tg-admin Telegram management bot
 Wants=network-online.target
 After=network-online.target
 
@@ -14,7 +14,10 @@ Restart=on-failure
 RestartSec=5
 UMask=0077
 PrivateTmp=true
-ProtectHome=true
+# Phase 2 runs selected root commands inside this service namespace.
+# ProtectHome=true would hide /home, /root and /run/user from even the
+# authenticated helper, blocking legitimate administration of those paths.
+# Separate tgexec OS permissions continue to isolate ordinary commands.
 # Do NOT set NoNewPrivileges=yes: Phase 1 uses sudo solely to change
 # identity to the less-privileged tgexec account.
 # Bot must NEVER be a member of docker or sudo groups.
