@@ -46,6 +46,31 @@ sudoedit /etc/tg-admin/bot.env
 
 将其中四个示例字段替换为真实 Bot Token、Telegram 数字 User ID、私聊 Chat ID、L1 TOTP 密钥。文件权限由安装脚本设为 `root:tgbot 0640`。
 
+### Telegram API 代理（与 tg-auto 一致）
+
+`tg-auto` 用 `TG_AUTO_PROXY=socks5://127.0.0.1:2080` 连接本地 Throne。tg-admin 采用同样格式：
+
+```dotenv
+TG_ADMIN_PROXY=socks5://127.0.0.1:2080
+```
+
+将其追加到 `/etc/tg-admin/bot.env`。仅影响 Bot 对 Telegram API 的连接，**不会自动为 `/run` 命令配置代理**。如需直连，设为 `TG_ADMIN_PROXY=`。
+
+在部署前确认本地 Throne 监听器确实在端口 `2080`，且进程可访问该监听地址。不要直接假设端口或代理已启动。
+
+更新现有安装：
+
+```bash
+sudo git -C /opt/tg-admin pull --ff-only
+cd /opt/tg-admin
+sudo bash scripts/install.sh
+sudoedit /etc/tg-admin/bot.env
+sudo systemctl restart tg-admin.service
+sudo systemctl status tg-admin.service --no-pager -l
+```
+
+**注意：**已经存在的 `bot.env` 不会被安装脚本覆盖，因此升级后必须自行补充 `TG_ADMIN_PROXY`。安装脚本会安装 Socks5 所需的可选依赖。对于 HTTP 代理，可写 `TG_ADMIN_PROXY=http://127.0.0.1:2080`。
+
 ## 3. 验证并启动
 
 安装脚本已经检查 sudoers 语法，且只开放 `tgbot -> tgexec` 的固定执行入口。建议额外核查：
