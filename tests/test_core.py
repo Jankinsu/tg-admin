@@ -8,8 +8,8 @@ from tg_admin.core import AuthState, ExecResult, execute, validate_command
 
 def test_login_replay_and_idle_expiry():
     now = [1_700_000_010.0]
-    auth = AuthState("JBSWY3DPEHPK3PXP", clock=lambda: now[0])
-    code = pyotp.TOTP("JBSWY3DPEHPK3PXP").at(now[0])
+    auth = AuthState("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", clock=lambda: now[0])
+    code = pyotp.TOTP("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP").at(now[0])
     assert "登录成功" in auth.login(code)
     assert auth.authorized(touch=True)
     assert "已经使用" in auth.login(code)
@@ -19,11 +19,11 @@ def test_login_replay_and_idle_expiry():
 
 def test_failed_login_lockout():
     now = [1_700_000_010.0]
-    auth = AuthState("JBSWY3DPEHPK3PXP", clock=lambda: now[0])
+    auth = AuthState("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", clock=lambda: now[0])
     for _ in range(4):
         auth.login("000000")
     assert "锁定" in auth.login("000000")
-    assert "锁定" in auth.login(pyotp.TOTP("JBSWY3DPEHPK3PXP").at(now[0]))
+    assert "锁定" in auth.login(pyotp.TOTP("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP").at(now[0]))
 
 
 @pytest.mark.parametrize("command", ["", "x\ny", "x\ry", "x\x00y", "x" * 2049])
