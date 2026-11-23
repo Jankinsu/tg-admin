@@ -1,0 +1,4 @@
+# Install after verifying exact script paths, owners, and mode.
+# Allows only the fixed runner to execute as non-privileged tgexec.
+# Does not grant root or Docker access.
+tgbot ALL=(tgexec) NOPASSWD: /usr/bin/python3 -I /opt/tg-admin/runner.py
