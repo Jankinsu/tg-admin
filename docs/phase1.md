@@ -88,6 +88,34 @@ sudo systemctl status tg-admin.service --no-pager
 
 与 `tg-auto`、`tdl-bot` 保持一致的行为：**安装默认不重启，卸载默认保留配置和代码，`--purge` 才清理**。具体命令与保护范围见 [deployment-conventions.md](deployment-conventions.md)。
 
+## Telegram 原生命令菜单
+
+服务启动后会为**已授权的私聊 Chat ID** 注册 Telegram 原生命令菜单。打开对话框输入框旁的 **Menu**（或输入 `/`）即可选择：
+
+| 命令 | 功能 |
+| --- | --- |
+| `/help` | 显示详细命令说明与示例 |
+| `/login` | 开启 TOTP 登录；选中后补充空格和 6 位验证码 |
+| `/whoami` | 查询管理会话是否有效 |
+| `/run` | 以 `tgexec` 执行普通 Shell 命令；选中后补充命令 |
+| `/logout` | 结束管理会话 |
+
+`/start` 和 `/menu` 也可显示帮助，但为保持原生菜单简洁，不另外列出。
+
+`/sudo`、`/docker` 尚未实现，因此不会显示为可执行命令。
+
+### 更新已有实例
+
+```bash
+sudo git -c http.proxy=socks5h://127.0.0.1:2080 \\
+  -C /opt/tg-admin pull --ff-only
+
+cd /opt/tg-admin
+sudo bash scripts/install.sh --restart
+```
+
+安装器保留既有 `/etc/tg-admin/bot.env`，`--restart` 只重启当前已运行的服务。如果没有运行，改用 `sudo systemctl enable --now tg-admin.service`。
+
 ## 5. 手机试用
 
 在与 Bot 的**私聊**中：
