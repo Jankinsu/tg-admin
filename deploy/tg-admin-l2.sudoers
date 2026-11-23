@@ -1,0 +1,4 @@
+# Phase 2: opt-in only, installed separately by scripts/enable-l2.sh.
+# Root process verifies distinct L2 OTP, server-persisted request and replay protection.
+# DO NOT grant generic docker/sudo/bash access here.
+tgbot ALL=(root) NOPASSWD: /usr/bin/python3 -I /opt/tg-admin/privileged.py
