@@ -15,6 +15,22 @@
 
 首次安装要求系统中已存在 `tgbot`、`tgexec` 两个非 root 账户，且都不属于 `sudo` 或 `docker` 组。如尚未创建，请先创建并检查账户配置；安装器不会代建。
 
+如果是**全新服务器**，先检查账户是否存在：
+
+```bash
+id tgbot
+id tgexec
+```
+
+缺失时才分别创建（不要对已有账户重复执行）：
+
+```bash
+sudo useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin tgbot
+sudo useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin tgexec
+```
+
+确认两者均不在 `sudo`、`docker` 组，且这两个账户都不是 root。已部署实例不要更改现有账户。
+
 ```bash
 sudo apt update
 sudo apt install -y git python3 python3-venv python3-pip sudo
