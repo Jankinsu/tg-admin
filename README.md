@@ -5,6 +5,8 @@
 
 **项目状态：Phase 1 已实机验证；Phase 2 核心功能及重放、超时、取消测试已由用户在 Debian 13 验证；Phase 3 开始（尚未正式发布）**
 
+💬 **菜单交互升级**：`/login`、`/run`、`/sudo`、`/approve` 可直接点击 Menu，回复 Bot 的参数提示；仍兼容 `/run uptime` 等完整命令。未匹配提示的普通聊天文本不会自动执行。
+
 🔐 **[Phase 2 单次提权与部署验证](docs/phase2.md)**：第二组独立 TOTP、一次一授权、明确 opt-in 启用与回退。
 
 🧪 **[Phase 1 安装与测试说明](docs/phase1.md)**：包含专用用户、最小 sudoers、TOTP 配置、systemd 服务与测试步骤。请先在测试环境验证。
