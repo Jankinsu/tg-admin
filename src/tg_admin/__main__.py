@@ -43,6 +43,7 @@ HELP_TEXT = """🛠 tg-admin · 可用命令
 
 原来的完整命令仍可直接发送：
 /login 123456
+/run whoami
 /run uptime
 /run free -h
 /run systemctl status docker --no-pager
