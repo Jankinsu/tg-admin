@@ -101,6 +101,20 @@ async def main_bot() -> None:
     pending_request: str | None = None
     pending_input: PendingInput | None = None
 
+    async def clear_prompt(update: Update) -> None:
+        """Remove the ForceReply anchor after completion or command switching.
+
+        Telegram controls the actual client-side reply bar; deleting its
+        original message avoids leaving a stale ForceReply anchor around.
+        """
+        nonlocal pending_input
+        previous, pending_input = pending_input, None
+        if previous is not None:
+            try:
+                await update.effective_chat.delete_message(previous.prompt_id)
+            except Exception:
+                log.debug("Unable to remove previous ForceReply prompt.")
+
     def allowed(update: Update) -> bool:
         return (
             update.effective_user is not None
@@ -112,7 +126,7 @@ async def main_bot() -> None:
 
     async def prompt_for(update: Update, kind: str, description: str, ttl: int = 120) -> None:
         nonlocal pending_input
-        pending_input = None
+        await clear_prompt(update)
         sent = await update.effective_chat.send_message(
             description,
             reply_markup=ForceReply(
@@ -131,7 +145,7 @@ async def main_bot() -> None:
         nonlocal pending_input
         if not allowed(update):
             return
-        pending_input = None
+        await clear_prompt(update)
         await update.message.reply_text(HELP_TEXT)
 
     async def do_login(update: Update, code: str) -> None:
@@ -142,7 +156,7 @@ async def main_bot() -> None:
         nonlocal pending_input
         if not allowed(update):
             return
-        pending_input = None
+        await clear_prompt(update)
         if not context.args:
             await prompt_for(update, "login", "🔐 请直接回复这条消息，输入第一组 TOTP 的 6 位验证码。\n提示：验证码消息会尝试删除，但 Bot 私聊并非端到端加密。")
             return
@@ -155,7 +169,7 @@ async def main_bot() -> None:
         nonlocal pending_request, pending_input
         if not allowed(update):
             return
-        pending_input = None
+        await clear_prompt(update)
         auth.logout()
         if pending_request:
             rid, pending_request = pending_request, None
@@ -169,7 +183,7 @@ async def main_bot() -> None:
         nonlocal pending_input
         if not allowed(update):
             return
-        pending_input = None
+        await clear_prompt(update)
         await update.message.reply_text("✅ 管理会话有效" if auth.authorized() else "🔒 未登录或会话已过期")
 
     async def do_run(update: Update, command: str) -> None:
@@ -189,7 +203,7 @@ async def main_bot() -> None:
         nonlocal pending_input
         if not allowed(update):
             return
-        pending_input = None
+        await clear_prompt(update)
         if not auth.authorized(touch=True):
             await update.message.reply_text("请先通过 /login 完成 TOTP 认证。")
             return
@@ -223,7 +237,7 @@ async def main_bot() -> None:
         nonlocal pending_input
         if not allowed(update):
             return
-        pending_input = None
+        await clear_prompt(update)
         if not auth.authorized(touch=True):
             await update.message.reply_text("请先完成 /login。")
             return
@@ -237,7 +251,7 @@ async def main_bot() -> None:
         nonlocal pending_request, pending_input
         if not allowed(update):
             return
-        pending_input = None
+        await clear_prompt(update)
         if not pending_request:
             await update.message.reply_text("当前没有待授权命令。")
             return
@@ -284,7 +298,7 @@ async def main_bot() -> None:
         nonlocal pending_input
         if not allowed(update):
             return
-        pending_input = None
+        await clear_prompt(update)
         if not auth.authorized(touch=True):
             await delete_if_possible(update.message)
             await update.effective_chat.send_message("管理会话已过期，请重新 /login。")
@@ -312,10 +326,11 @@ async def main_bot() -> None:
             # Intentionally ignore messages that aren't replies to the active prompt.
             # This prevents accidental execution of unrelated private-chat text.
             if reply and reply.message_id == pending_input.prompt_id:
-                pending_input = None
+                await clear_prompt(update)
                 await update.effective_chat.send_message("输入已超时，请重新从 Menu 选择命令。")
             return
-        kind, pending_input = pending_input.kind, None
+        kind = pending_input.kind
+        await clear_prompt(update)
         value = message.text or ""
         if kind in ("login", "approve"):
             if kind == "login":
