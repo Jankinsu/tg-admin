@@ -1,6 +1,6 @@
 # Phase 1：在 Debian 13 上试运行
 
-> **开发阶段原型**：本阶段只有普通权限命令、Telegram 私聊白名单和第一组 TOTP；没有第二组认证、root 提权或 Docker Socket 管理。建议先在测试主机/测试账号上验证。首次启用前请审查代码。
+> **历史阶段文档（Phase 1 已通过 Debian 13 实机验证）**：本文聚焦 L1 登录和普通 Shell 的首次安装；完整程序现已支持 Phase 2 的独立 TOTP 单次提权。高权限功能须按 [Phase 2 指南](phase2.md) 明确启用。
 
 ## 要求
 
@@ -13,7 +13,7 @@
 
 `tg-admin` 因为需要接收远程命令，使用 root 拥有的 `/opt/tg-admin` 而不是用户可写的 `~/apps`。统一的安装和卸载脚本见 [部署约定](deployment-conventions.md)。
 
-**用户当前已创建 `tgbot`、`tgexec`，不用再创建。**
+首次安装要求系统中已存在 `tgbot`、`tgexec` 两个非 root 账户，且都不属于 `sudo` 或 `docker` 组。如尚未创建，请先创建并检查账户配置；安装器不会代建。
 
 ```bash
 sudo apt update
@@ -61,7 +61,7 @@ TG_ADMIN_PROXY=socks5://127.0.0.1:2080
 更新现有安装：
 
 ```bash
-sudo git -C /opt/tg-admin pull --ff-only
+sudo git -c http.proxy=socks5h://127.0.0.1:2080 -C /opt/tg-admin pull --ff-only
 cd /opt/tg-admin
 sudo bash scripts/install.sh
 sudoedit /etc/tg-admin/bot.env
@@ -69,7 +69,7 @@ sudo systemctl restart tg-admin.service
 sudo systemctl status tg-admin.service --no-pager -l
 ```
 
-**注意：**已经存在的 `bot.env` 不会被安装脚本覆盖，因此升级后必须自行补充 `TG_ADMIN_PROXY`。安装脚本会安装 Socks5 所需的可选依赖。对于 HTTP 代理，可写 `TG_ADMIN_PROXY=http://127.0.0.1:2080`。
+**注意：**已经存在的 `bot.env` 不会被安装脚本覆盖。仅在你尚未配置代理时才需要补充 `TG_ADMIN_PROXY`；Git 上的 `socks5h` 代理配置和 Bot 运行时的 `TG_ADMIN_PROXY` 是两个独立设置。对于 HTTP 代理，可写 `TG_ADMIN_PROXY=http://127.0.0.1:2080`。
 
 ## 3. 验证并启动
 
@@ -88,33 +88,22 @@ sudo systemctl status tg-admin.service --no-pager
 
 与 `tg-auto`、`tdl-bot` 保持一致的行为：**安装默认不重启，卸载默认保留配置和代码，`--purge` 才清理**。具体命令与保护范围见 [deployment-conventions.md](deployment-conventions.md)。
 
-## Telegram 原生命令菜单
+## Telegram 原生命令菜单（现行版本）
 
-服务启动后会为**已授权的私聊 Chat ID** 注册 Telegram 原生命令菜单。打开对话框输入框旁的 **Menu**（或输入 `/`）即可选择：
+程序已提供 `/help`、`/login`、`/whoami`、`/run`、`/sudo`、`/approve`、`/cancel` 和 `/logout`。点击 Menu 中的带参数命令时，Bot 会发送 ForceReply 输入提示；用户直接回复参数即可，处理完成后 Bot 会尽量删除原提示消息，减少回复栏残留。
 
-| 命令 | 功能 |
-| --- | --- |
-| `/help` | 显示详细命令说明与示例 |
-| `/login` | 开启 TOTP 登录；选中后补充空格和 6 位验证码 |
-| `/whoami` | 查询管理会话是否有效 |
-| `/run` | 以 `tgexec` 执行普通 Shell 命令；选中后补充命令 |
-| `/logout` | 结束管理会话 |
+原来的 `/login 123456`、`/run uptime` 等完整命令格式继续有效。**普通安装不会开启 L2**；高权限功能应参照 [Phase 2 指南](phase2.md) 独立启用。
 
-`/start` 和 `/menu` 也可显示帮助，但为保持原生菜单简洁，不另外列出。
-
-`/sudo`、`/docker` 尚未实现，因此不会显示为可执行命令。
-
-### 更新已有实例
+### 更新已安装的实例
 
 ```bash
-sudo git -c http.proxy=socks5h://127.0.0.1:2080 \\
+sudo git -c http.proxy=socks5h://127.0.0.1:2080 \
   -C /opt/tg-admin pull --ff-only
-
 cd /opt/tg-admin
 sudo bash scripts/install.sh --restart
 ```
 
-安装器保留既有 `/etc/tg-admin/bot.env`，`--restart` 只重启当前已运行的服务。如果没有运行，改用 `sudo systemctl enable --now tg-admin.service`。
+本例 Git 使用本机 SOCKS5 代理；未配置代理时删去 `-c http.proxy=...`。安装器保留既有配置。若服务尚未启动，可使用 `sudo systemctl enable --now tg-admin.service`。
 
 ## 5. 手机试用
 
@@ -132,7 +121,7 @@ sudo bash scripts/install.sh --restart
 
 `123456` 只是占位例子，实际应使用手机身份验证器显示的动态码。登录消息会尝试删除，但 Telegram 私聊**不是端到端加密**，且无法保证消息已经完全从所有相关系统移除。
 
-预期：`/run whoami` 返回 `tgexec`，而非 `root` 或 `tgbot`。`/run sudo ...` 不应获得额外权限；现阶段不存在 `/sudo` 命令。
+预期：`/run whoami` 返回 `tgexec`，而非 `root` 或 `tgbot`。`/run sudo ...` 不应获得额外权限；高权限命令必须使用 `/sudo`，并在独立配置 L2 后以第二组 TOTP 授权。
 
 如需观察服务日志：
 
@@ -168,7 +157,7 @@ sudo systemctl status tg-admin.service --no-pager -l
 | `/login` 总失败 | 系统时间同步、TOTP 密钥是否录入正确、是否重复使用同一周期验证码 |
 | `/run` 返回执行入口失败 | `sudo -u tgbot sudo -n -l`、脚本路径、文件权限 |
 | `/run whoami` 不是 tgexec | **立即停用 Bot**，检查 sudoers 和运行账户 |
-| Docker 不可管理 | Phase 1 刻意未启用，等待 Phase 2/3 |
+| Docker 不可管理 | 检查是否已按 Phase 2 指南启用 L2，并使用 `/sudo docker ps -a`；`/docker` 专用菜单仍未开发 |
 
 ## 7. 测试
 
@@ -180,7 +169,7 @@ python3 -m venv .venv
 .venv/bin/pytest -q
 ```
 
-测试覆盖 TOTP 使用与重放、会话空闲超时、命令检查、执行入口固定路径、非特权 runner 的输出截断。**CI 和真实 Debian 集成测试仍待执行**。
+测试覆盖 TOTP 使用与重放、会话空闲超时、命令检查、执行入口固定路径、非特权 runner 的输出截断。**CI 已执行，Phase 1 主要功能也已在 Debian 13 实机验证**；完整异常及安全审查仍待继续。
 
 ## 8. 停用与卸载
 
