@@ -1,235 +1,171 @@
 # tg-admin
 
-> 通过 Telegram 远程管理 Linux：随时查看状态、管理现有 Docker 容器、部署服务，并将命令执行结果回传手机。  
+> 通过 Telegram 私聊远程管理自己的 Debian 服务器：查看系统状态、执行 Shell 命令、使用独立 TOTP 单次提权，并操作现有 Docker Engine。
+>
 > **Full control when needed. Minimal privilege by default.**
 
-**项目状态：Phase 1 已实机验证；Phase 2 核心功能及重放、超时、取消测试已由用户在 Debian 13 验证；Phase 3 开始（尚未正式发布）**
+**项目状态（2026-11）：Phase 1 已通过 Debian 13 实机验证；Phase 2 的基本提权、Docker 查询与重放/超时/取消流程已通过实机测试；Phase 3 正在开发。当前仍是个人使用的开发版本，尚非经过完整安全审计的稳定发行版。**
 
-💬 **菜单交互升级**：`/login`、`/run`、`/sudo`、`/approve` 可直接点击 Menu，回复 Bot 的参数提示；仍兼容 `/run uptime` 等完整命令。未匹配提示的普通聊天文本不会自动执行。
+## 已经可以做什么？
 
-🔐 **[Phase 2 单次提权与部署验证](docs/phase2.md)**：第二组独立 TOTP、一次一授权、明确 opt-in 启用与回退。
+- **普通命令**：在独立的 \`tgexec\` 账户下执行 \`uptime\`、\`free -h\`、\`df -h\`、\`systemctl status\` 等非交互式 Shell 命令。
+- **单次提权**：\`/sudo <完整命令>\` 先展示命令，之后使用独立于登录验证的第二组 TOTP 执行**一次** root 命令。每条新的高权限命令都要重新授权。
+- **管理已有 Docker 环境**：已实测 \`/sudo docker ps -a\` 可读取部署 Bot 之前就存在的容器，无需迁移或建立 Rootless Docker。容器启停、日志、部署等通用 Docker CLI 命令可经 \`/sudo\` 提交，但尚未逐一完成实机验收，也没有专用的 \`/docker\` 图形化管理菜单。
+- **手机友好的菜单**：Telegram 原生命令菜单、ForceReply 参数提示、回复完成后自动清理旧提示；同时兼容直接输入完整命令。
+- **状态与结果回传**：输出退出码、stdout 和 stderr；支持超时、输出截断及基本失败反馈。
+- **可选本地代理**：\`TG_ADMIN_PROXY\` 可通过 Throne 等 HTTP/SOCKS5 代理访问 Telegram API。
 
-🧪 **[Phase 1 安装与测试说明](docs/phase1.md)**：包含专用用户、最小 sudoers、TOTP 配置、systemd 服务与测试步骤。请先在测试环境验证。
+**用途**：当不方便使用 SSH 时，手机可与 Bot 交互管理服务器；尤其适用于“AI 提供诊断建议及命令 → 用户审查后通过 Telegram 执行 → 回传结果继续分析”的流程。**Bot 不是 SSH 故障恢复通道，也不自动执行 AI 指令。**
 
-🛠️ **[部署风格与安装/卸载说明](docs/deployment-conventions.md)**：参照 `tdl-bot`、`tg-auto`，提供 `scripts/install.sh`、`scripts/uninstall.sh`，默认保留配置，不自动启动或重启。
+## 命令速览
 
-📐 **[架构与安全设计（Phase 0）](docs/architecture.md)**：说明账号隔离、L1/L2 认证、单次提权请求协议、风险边界及 MVP 验收测试。
+| 菜单命令 | 当前行为 |
+| --- | --- |
+| \`/help\` | 查看命令和示例；\`/start\`、\`/menu\` 也能显示帮助 |
+| \`/login\` | 第一组 TOTP，登录普通管理会话 |
+| \`/whoami\` | 查询普通管理会话状态 |
+| \`/run\` | 用 \`tgexec\` 运行普通 Shell 命令 |
+| \`/sudo\` | 提交一条完整的 root 命令，**仅登记等待授权，不会直接执行** |
+| \`/approve\` | 输入第二组 TOTP，授权执行当前待处理请求一次 |
+| \`/cancel\` | 取消待授权请求 |
+| \`/logout\` | 登出并取消待授权请求 |
 
-## 1. 项目简介
+**使用方法 A：点击 Menu。** 对 \`/login\`、\`/run\`、\`/sudo\`、\`/approve\`，Bot 会发出参数提示。直接回复提示消息即可；执行完成后，Bot 会尽量删除旧提示，避免聊天输入框一直停留在回复状态。其他无参数命令点击后直接处理。
 
-**tg-admin** 是一个面向个人自托管服务器的轻量级 Telegram 远程管理 Bot，首个目标平台为 **Debian 13**。
+**使用方法 B：直接发送完整命令**（两种输入方式始终兼容）：
 
-它解决一个很实际的问题：当身边没有电脑、不方便建立 SSH 会话时，仍可以用手机向 Telegram Bot 发送命令，检查系统和服务状态，操作**当前服务器上已有的 Docker 容器**，部署新服务、配置 WebUI 端口，并收到标准输出、错误输出和退出状态。
-
-项目也特别适合“**AI 助手提供诊断思路与命令 → 人工确认 → Telegram 执行 → 回传结果 → AI 继续分析**”的协作流程。AI 不自动获得服务器控制权，最终执行由用户决定。
-
-**定位：SSH 的日常辅助管理通道，不替代 SSH 或服务器故障恢复控制台。**
-
-## 2. 核心设计原则
-
-- **管理能力优先**：必须能够管理当前 Docker Engine 中**已经存在的容器**，而不仅是 Bot 自己创建的容器。
-- **保持轻量**：优先使用 Python、Telegram Bot API、Linux 原生命令和现有 Docker 环境，不建设大型 Web 管理平台。
-- **默认普通权限，按需单次提权**：日常命令在非特权身份下执行；高权限命令需要独立的即时身份验证，每次授权只对一条已确认的命令有效。
-- **操作由用户发起**：不允许 AI、定时任务或来自不可信消息的内容绕过认证自动执行高权限命令。
-- **可观察、可追溯**：保留执行时间、请求标识、命令、退出码及必要日志，控制敏感信息泄露。
-- **真实边界、不过度承诺**：单次提权减少长期授权暴露，但通过授权执行任意 root 命令仍具备完整系统控制能力；不把二次认证误称为 sudo 命令白名单。
-
-## 3. 目标功能
-
-### 3.1 系统状态与服务检查
-
-- 查询 CPU、内存、磁盘、系统负载、运行时间。
-- 查看进程、网络接口及端口监听情况。
-- 查询 systemd 服务状态与日志。
-- 获取命令的 stdout、stderr、退出码；对过长输出采用截断、分段或文件回传。
-
-### 3.2 现有 Docker 环境管理
-
-**直接连接并管理宿主机当前运行的 Docker Engine，不另建隔离的 Docker 环境。**
-
-- 列出所有容器、镜像及状态；查看资源使用、日志、端口映射。
-- 启动、停止、重启已有容器。
-- 拉取镜像、创建/部署新容器。
-- 支持 Docker Compose 项目的部署、查看与维护。
-- 设置 WebUI 的宿主机端口映射、重启策略、环境变量和持久化数据。
-- 逐步支持容器更新、重建与配置恢复；明确提示重建和数据变更风险。
-
-> Docker Engine 的完整控制接口通常具有接近 root 的能力。项目不会把“能访问 Docker Socket”描述为天然低权限；相关操作按高权限管理。
-
-### 3.3 Telegram 命令交互
-
-初步拟定以下交互形式，**仅为接口草案，不代表已实现**：
-
-```text
-/help                         # 命令帮助
-/login                        # 开启 TOTP 认证的管理会话
-/logout                       # 主动结束管理会话
-
-/run uptime                   # 普通命令
+\`\`\`text
+/login 123456
+/run uptime
 /run free -h
-/run systemctl status docker
+/sudo id
+/approve 654321
+/sudo docker ps -a
+/approve <第二组新验证码>
+/logout
+\`\`\`
 
-/docker ps                    # 查询已有容器
-/docker logs nginx --tail 50
-/docker restart nginx
-/docker deploy ...            # 部署参数形式待设计
-```
+示例验证码是假数据。第一组和第二组必须来自**不同 TOTP 密钥**；第二组验证码在同一个 30 秒周期内不能重复使用。
 
-需要提权的命令统一使用 `/sudo <命令>`（接口草案），展示完整命令、请求第二组独立 TOTP 验证，仅执行已确认的单次操作，执行完毕立即失效。首次实现采用 Telegram 私聊验证码；其信任边界与后续独立 HTTPS 验证升级路径见 [架构设计](docs/architecture.md)。
+高权限命令经过如下流程：
 
-## 4. 安全与权限模型
+\`\`\`text
+私聊白名单 → /login 第一组 TOTP → L1 会话
+                                       │
+/run <命令> ──────────────→ tgexec 普通命令执行
+                                       │
+/sudo <完整命令> → root 保存请求并回显命令（尚未执行）
+                  → /approve 第二组 TOTP
+                  → root 核对请求/验证码/有效期并一次性消费
+                  → root 执行这条命令 → 返回执行结果
+\`\`\`
 
-本项目采用 **Telegram 身份白名单 + 普通管理会话 TOTP + 高权限操作独立二次认证** 的设计，避免长期保持 root 管理会话。
+## 部署到 Debian 13
 
-| 层级 | 操作范围 | 授权方式 |
+要求：Python 3.11+、\`git\`、\`sudo\`、\`python3-venv\`、systemd、Telegram Bot Token、个人 User ID / 私聊 Chat ID、TOTP 验证器，以及独立可用的 SSH 恢复入口。
+
+程序安装在由 root 拥有的 \`/opt/tg-admin\`；\`tgbot\` 运行 Bot，\`tgexec\` 执行普通命令。**两个账户均不得加入 \`sudo\` 或 \`docker\` 组。**安装器要求账户已经存在；首次安装和账户准备请参见 [Phase 1 安装指南](docs/phase1.md)。
+
+### 首次安装
+
+\`\`\`bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip sudo
+
+# 请先按 Phase 1 指南创建 tgbot / tgexec 账户（如果尚不存在）
+sudo git clone https://github.com/Jankinsu/tg-admin.git /opt/tg-admin
+sudo chown -R root:root /opt/tg-admin
+sudo chmod -R go-w /opt/tg-admin
+
+cd /opt/tg-admin
+sudo bash scripts/install.sh
+sudoedit /etc/tg-admin/bot.env
+sudo systemctl enable --now tg-admin.service
+sudo systemctl status tg-admin.service --no-pager -l
+\`\`\`
+
+\`bot.env\` 中应配置 \`TG_ADMIN_BOT_TOKEN\`、\`TG_ADMIN_USER_ID\`、\`TG_ADMIN_CHAT_ID\`、\`TG_ADMIN_TOTP_SECRET\`，必要时设置 \`TG_ADMIN_PROXY=socks5://127.0.0.1:2080\`（端口仅为本地 Throne 示例）。
+
+**普通安装不会自动启用 root 提权。** 经过检查后，按照 [Phase 2 指南](docs/phase2.md) 单独执行 \`sudo bash scripts/enable-l2.sh\`，在 SSH 终端录入**另一组** TOTP 密钥至身份验证器，并重启服务。绝不把任何真实密钥提交到仓库或发到聊天中。
+
+### 更新现有实例
+
+\`\`\`bash
+sudo git -c http.proxy=socks5h://127.0.0.1:2080 \
+  -C /opt/tg-admin pull --ff-only
+
+cd /opt/tg-admin
+sudo bash scripts/install.sh --restart
+sudo systemctl status tg-admin.service --no-pager -l
+\`\`\`
+
+上述 Git 命令采用本地 \`127.0.0.1:2080\` 的 SOCKS5 代理；没有配置该代理时去掉 \`-c http.proxy=...\`。更新会保留 \`/etc/tg-admin/bot.env\` 和已经配置的 L2 密钥及授权状态，且普通安装脚本不会主动增加 L2 root 授权。
+
+**撤销 root 权限（保留普通 Bot）**：
+
+\`\`\`bash
+sudo bash /opt/tg-admin/scripts/disable-l2.sh
+sudo systemctl restart tg-admin.service
+\`\`\`
+
+**卸载**：
+
+\`\`\`bash
+sudo bash /opt/tg-admin/scripts/uninstall.sh
+\`\`\`
+
+默认停止服务并移除 L1/L2 sudoers，保留代码、配置、L2 审计状态；\`--purge\` 才会删除本项目代码、凭据及状态。两种操作都不主动删除 Docker 容器、镜像和数据卷。详情参见 [部署约定](docs/deployment-conventions.md)。
+
+## 安全边界
+
+- Telegram 端按配置的 User ID + **私人 Chat ID** 双重检查；菜单也仅注册到该私聊，但菜单可见性不是权限校验。
+- **L1**：普通 TOTP 会话最长 15 分钟，空闲 5 分钟过期，具有错误次数限制。
+- **L2**：第二组独立 TOTP、root 保存待执行完整命令、60 秒请求有效期、单次消费与验证码重放防护；不缓存长期 root 会话。授权记录在 root 管理的 SQLite 中。
+- Bot 以 \`tgbot\` 运行；普通执行账户 \`tgexec\` 不掌握 Bot Token 或 L2 密钥。高权限执行器 \`privileged.py\` 以 root 身份按需调用，sudoers 只许可固定执行入口。
+- **重要限制**：Telegram Bot 私聊**不是端到端加密**。尽管验证码消息会尝试删除，无法保证完全消除其暴露风险；若 Bot 本身已被攻陷，目前的 L2 Telegram 验证流程也不能提供独立可信的授权确认。
+- **一次 root 授权不是沙箱**：被授权的 Shell 命令可修改系统、启动后台进程、访问 Docker Socket，甚至永久改变权限。不要在不理解命令后果时直接执行。
+- 当前实现的 root 命令为非交互式执行，约 120 秒超时、合计 24 KiB 输出上限。长时间镜像拉取、交互安装器或大日志可能不适合直接使用。
+- 本项目仍需进一步进行请求篡改、异常中断、长期可靠性和安全审查测试。始终保留独立 SSH 管理能力。
+
+## 真实进度与路线图
+
+| 阶段 | 状态 | 当前已验证或待实现内容 |
 | --- | --- | --- |
-| L0 | 未认证消息 | 仅允许登录及有限帮助操作 |
-| L1 | 普通 Linux 用户权限下的命令、状态查询 | Telegram 用户/私聊校验 + TOTP 会话认证 |
-| L2 | 需要 sudo、Docker 管理或修改系统状态的操作 | 在 L1 基础上，对指定命令再次独立验证，一次一授权 |
+| Phase 0：需求与架构 | ✅ 完成 | 角色隔离、两级认证和单次授权设计 |
+| Phase 1：普通管理 | ✅ 实机通过 | Telegram 连接、L1 TOTP、普通 Shell、结果回传、原生命令菜单 |
+| Phase 2：单次提权 | ✅ 核心实机通过 | \`/sudo id\` root 执行、Docker 列表、重放/超时/取消；异常中断等补测 |
+| Phase 3：Docker 管理 | 🚧 进行中 | 已用 \`/sudo docker ps -a\` 读取现有容器；专用交互、日志/启停等未完成 |
+| Phase 4：部署与维护 | ⏳ 计划中 | Docker Compose、新容器、WebUI 端口、卷和更新流程 |
+| Phase 5：工程化发布 | 🚧 部分完成 | 安装/卸载脚本、CI、部署文档已具备；安全审查与正式发布未完成 |
 
-### 4.1 必须满足的安全约束
+**下一步**：在已通过验证的 L2 单次授权上开发 Docker 容器信息、日志、启停和 Telegram 快捷交互，仍保留对现有 Docker Engine 的完整管理能力，不迁移容器。
 
-1. **Telegram 入口校验**：只接受配置的 Telegram User ID 和私聊 Chat ID；账号自身建议开启 Telegram 两步验证及设备锁。
-2. **普通管理会话**：使用 TOTP 验证，具有绝对有效期、空闲超时、失败尝试限制、验证码重放保护及主动登出能力。
-3. **高权限即时认证**：使用与 L1 独立的验证凭据或机制。授权绑定用户、完整命令/参数、唯一请求 ID、截止时间；**只允许消费一次**，不可转换成长期 root Shell。
-4. **特权执行边界**：Bot 消息处理进程以非 root 账户运行。高权限执行由独立、最小化的本地特权组件完成；该组件**必须自行校验授权**，不能信任 Bot 传入的“已验证”标志。
-5. **权限保护**：Bot 的普通命令执行环境不能读取认证密钥、修改特权组件或其授权状态；避免通过任意普通命令绕过认证。
-6. **执行控制**：限制并发、执行时间和输出大小；取消操作时终止相关进程，避免后台失控。
-7. **审计与隐私**：记录操作和结果，限制日志权限；Token、TOTP 秘钥、环境变量及其他敏感信息不写入公开仓库，也不作为普通日志完整回传。
-8. **慎重处理提权指令**：执行前显示最终将运行的完整命令；命令变更必须重新授权。对删除数据、修改网络或认证配置等操作明确提示风险。
-9. **认证入口**：首版为简化手机操作，拟在 Telegram 私聊中提交与 L1 不同的 L2 TOTP，由独立特权入口校验；这不能抵御 Bot 进程遭攻破后的验证码截获或请求篡改。后续可升级独立 HTTPS / Passkey 确认页面。
+## 项目结构
 
-> **安全边界说明**：这是个人自用的远程管理通道，不是为不可信多租户设计的沙箱。对任意高权限命令授予一次执行权限，本质上仍可能造成持久的 root 级修改；一次性认证保证的是授权生命周期，而非限制命令本身的影响。SSH 仍保留为故障恢复和紧急管理手段。
-
-### 4.2 建议的默认会话参数（待验证）
-
-- 普通会话：最长 **15 分钟**，空闲 **5 分钟**自动失效。
-- 高权限授权：绑定单条命令，请求 **60 秒**内完成验证，成功后仅执行一次。
-- 对 TOTP 验证设置失败次数限制、短时锁定及审计记录。
-- 不缓存 sudo 的长期认证状态；高权限操作之间不共享授权。
-
-这些参数在实际测试后可调整。
-
-## 5. 拟采用的技术栈
-
-| 组件 | 拟采用方案 | 用途 |
-| --- | --- | --- |
-| 语言 | Python 3 | Bot 与执行逻辑 |
-| Telegram | `python-telegram-bot`（暂定） | 消息、命令和确认交互 |
-| 会话认证 | `PyOTP`（暂定） | 普通管理会话 |
-| 高权限认证 | 独立 TOTP / WebAuthn 等，待原型验证 | 单条高权限操作授权 |
-| 命令执行 | `subprocess` + 独立执行账户 | 捕获输出、控制超时 |
-| Docker | Docker SDK / Docker CLI（待选型） | 管理**现有** Docker Engine |
-| 常驻服务 | systemd | 启动、重启与日志 |
-| 配置及审计 | 本地受限配置文件与日志 | 身份白名单、认证状态、操作记录 |
-
-首版**不要求**额外部署 Rootless Docker、数据库、WebUI、消息队列或云服务（Telegram API 除外）。
-
-## 6. 实施计划 / Roadmap
-
-> 采用小步验证方式推进。以下均为**计划任务**，没有勾选的功能尚未实现。
-
-### Phase 0 — 需求与架构确认
-
-- [x] 明确核心场景：系统查询、现有 Docker 管理、新容器部署与 WebUI 端口映射。
-- [x] 确定双级身份认证、单次高权限授权的总体方向。
-- [x] 确定项目名称与代码仓库。
-- [x] 确定认证入口、特权执行组件和请求绑定协议（设计基线见 [architecture.md](docs/architecture.md)，待实现验证）。
-- [x] 明确普通 Shell 命令与 Docker 管理命令的交互方式（`/run` 与 `/sudo`，待原型验证）。
-
-**验收标准**：已形成最小可实现架构与信任边界说明；实现与安全测试将在 Phase 1/2 进行。
-
-### Phase 1 — Telegram 通信与普通管理会话
-
-- [x] 建立 Python 项目、配置模板与基础测试用例（GitHub Actions 单元测试通过）。
-- [x] 编写 Telegram User ID / Chat ID 白名单逻辑（待实机验证）。
-- [x] 编写 TOTP 登录、会话超时、登出及失败限制（待实机验证）。
-- [x] 编写普通用户权限命令执行和输出回传（待实机验证）。
-- [x] 编写命令超时、并发顺序和输出大小限制（待实机验证）。
-- [x] 用户已在 Debian 13 验证 `/help`、TOTP `/login`、`/run whoami`、`uptime`、`free -h`、systemd 状态及原生命令菜单。
-
-**验收标准**：手机可安全查询 Debian 系统状态，并收到正确的 stdout、stderr、退出码。
-
-### Phase 2 — 独立认证与单次提权
-
-- [x] 选定独立高权限认证机制：第二组 TOTP（先经 Telegram 私聊，已记录其安全边界）。
-- [x] 编写 root 所有的独立执行组件和 opt-in 启用/禁用脚本（待 Debian 实机验证）。
-- [x] 编写命令绑定、60 秒有效期、单次消费与重放检查（待实机验证）。
-- [x] 编写命令预览、结果回传与 SQLite 授权记录（待实机验证）。
-- [x] 编写身份绑定、验证码重放、请求过期和取消的单元测试。
-- [x] Debian 13 实机验证 `/sudo id` 获得 root 身份、`/sudo docker ps -a` 返回现有容器信息。
-- [x] 用户完成单次授权的重复使用、请求超时、主动取消三类实机测试。
-- [ ] 后续补充请求篡改、故障恢复与异常中断的实机测试。
-
-**验收标准**：一条经单独授权的 sudo 命令能够执行；未授权、过期、已使用或被篡改的请求无法执行。
-
-### Phase 3 — Docker 现有容器管理
-
-- [x] 已通过 `/sudo docker ps -a` 成功读取现有 Docker Engine 容器信息（后续 `/docker` 专用交互待实现）。
-- [ ] 查询容器日志、资源占用、端口映射。
-- [ ] 对已有容器执行启动、停止、重启。
-- [ ] 验证 Docker 管理操作走 L2 授权机制。
-- [ ] 确保不会为了管理现有容器而迁移或重建 Docker 环境。
-
-**验收标准**：可通过 Telegram 管理在部署 Bot 前就已经存在的 Docker 容器。
-
-### Phase 4 — 容器部署与维护
-
-- [ ] 拉取镜像并部署新容器。
-- [ ] 设置宿主机 WebUI 端口、网络、环境变量和持久化数据。
-- [ ] 支持常见 Docker Compose 部署流程。
-- [ ] 支持可审查的容器更新/重建，并做好配置备份与错误反馈。
-- [ ] 测试端口冲突、镜像拉取失败、配置错误与重建失败场景。
-
-**验收标准**：仅用手机与 Bot，即可部署一个带 WebUI 的普通 Docker 服务，并管理其生命周期。
-
-### Phase 5 — 工程化与发布
-
-- [x] 编写安装、卸载脚本（待 Debian 13 实机验证）；更新复用安装脚本，尚无独立更新脚本。
-- [ ] 提供 systemd unit、环境配置示例和最小权限安装指导。
-- [ ] 补充单元/集成测试、日志轮转与错误恢复。
-- [ ] 检查公开仓库无 Bot Token、TOTP 密钥、个人账户或服务器隐私信息。
-- [ ] 发布首个可用版本与实际部署教程。
-
-**验收标准**：能够在干净的 Debian 13 环境重复部署、测试、卸载，且不破坏已有 Docker 容器与数据。
-
-## 7. 首版范围与暂不支持的功能
-
-**首版优先：**单用户、单台 Debian 13、Telegram 私聊、普通 Shell 命令、单次 sudo 提权、已有 Docker 管理、新容器部署、执行反馈。
-
-**暂不纳入：**多租户权限系统、多服务器控制面板、复杂 WebUI、自动 AI 决策执行、绕过交互认证的高权限定时任务、替代 SSH 的网络故障救援。
-
-未来可以按实际使用需要逐步扩展，而不是一开始建设通用运维平台。
-
-## 8. 预期目录结构（规划）
-
-```text
+\`\`\`text
 tg-admin/
-├── README.md
-├── LICENSE
-├── pyproject.toml
-├── .env.example
-├── src/
-│   └── tg_admin/
-│       ├── bot/                 # Telegram 消息与命令入口
-│       ├── auth/                # TOTP、会话及授权请求
-│       ├── executor/            # 普通命令与特权执行接口
-│       ├── docker/              # Docker 管理能力
-│       └── monitoring/          # 系统与服务查询
-├── scripts/                     # 一键安装、卸载（已添加）
-├── deploy/                      # systemd 服务和示例配置
-├── tests/
-└── docs/                        # 设计、安全模型及使用文档
-```
+├── src/tg_admin/
+│   ├── __main__.py       # Telegram 命令、菜单、ForceReply
+│   ├── input_flow.py     # 回复消息绑定与超时
+│   ├── core.py           # L1 会话与普通执行入口
+│   └── privilege.py      # L2 执行器调用端
+├── runner.py             # tgexec 普通 Shell 执行器
+├── privileged.py         # root 独立 TOTP 验证与单次授权执行器
+├── deploy/               # systemd 与 L1/L2 sudoers
+├── scripts/              # install / uninstall / enable-l2 / disable-l2
+├── tests/                # 单元测试
+├── docs/                 # 设计和部署文档
+├── .env.example          # 不包含真实密钥的配置模板
+└── pyproject.toml
+\`\`\`
 
-目录仅表示设计意向，实际实现时可简化或调整。
+## 更多文档
 
-## 9. 开发与使用提示
+- [Phase 1：首次安装、L1 TOTP 与普通命令](docs/phase1.md)
+- [Phase 2：单次提权、TOTP 初始化、验证与回退](docs/phase2.md)
+- [部署约定：安装、更新、卸载与目录权限](docs/deployment-conventions.md)
+- [架构基线：安全边界与设计取舍](docs/architecture.md)
 
-目前 **Phase 1 已实机验证，Phase 2 为待实机验收的原型**，不属于稳定版本。配置模板及手动安装指南请见 [docs/phase1.md](docs/phase1.md)；安装/卸载脚本已添加，**尚未完成 Debian 13 实机验证**。
+## License
 
-由于项目涉及高权限远程命令执行，部署前应审查执行器、保护凭据、测试认证失败路径，并保留可以独立工作的 SSH 管理通道。
-
-## 10. License
-
-许可证待确定；在正式选择并添加 `LICENSE` 文件前，不对代码的开源授权范围作出承诺。
+仓库尚未明确附加开源许可证；在正式选择并添加许可证前，不对代码的再分发和修改授权作出承诺。
